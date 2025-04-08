@@ -1,49 +1,50 @@
 from uagents import Agent, Context, Protocol, Model
-from insight_utils import load_csv, get_basic_stats  # Utility functions
-import base64
-import os
+from insight_utils import load_csv, get_basic_stats
+import pandas as pd
+import io
 
-# Message format using Pydantic model
+# Message definitions
 class DataRequest(Model):
-    content: str  # Base64-encoded CSV content
+    content: str  # CSV content as string
 
 class DataResponse(Model):
-    summary: str  # JSON-like string summary
+    summary: str
 
-# Define protocol
+# Protocol definition
 analysis_protocol = Protocol("DataAnalysis")
 
 @analysis_protocol.on_message(model=DataRequest)
 async def handle_analysis(ctx: Context, sender: str, msg: DataRequest):
-    ctx.logger.info(f"📩 Received data from {sender}")
-
+    ctx.logger.info(f"📩 Received CSV from {sender}")
     try:
-        # Decode the base64 string back to bytes
-        file_bytes = base64.b64decode(msg.content)
+        # Convert content string to bytes
+        csv_bytes = msg.content.encode('utf-8')
 
-        # Use utility to load and summarize data
-        df = load_csv(file_bytes)
-        summary = get_basic_stats(df)
+        # Load CSV from bytes
+        df = load_csv(csv_bytes)
 
-        # Log and respond
-        ctx.logger.info("✅ Data analysis completed")
-        await ctx.send(sender, DataResponse(summary=str(summary)))
+        # Analyze it
+        stats = get_basic_stats(df)
+
+        # Convert stats to a string (avoids JSON serialization issue)
+        summary_str = f"Shape: {stats['shape']}\nColumns: {stats['columns']}\nSummary: {stats['summary']}"
+
+        # Send back
+        await ctx.send(sender, DataResponse(summary=summary_str))
+        ctx.logger.info("✅ Summary sent to client.")
 
     except Exception as e:
-        ctx.logger.error(f"❌ Error analyzing data: {e}")
-        await ctx.send(sender, DataResponse(summary=f"Error: {e}"))
+        ctx.logger.error(f"❌ Error analyzing data: {str(e)}")
 
-# Instantiate the agent
+# Create the agent
 data_agent = Agent(
     name="insight_genie_agent",
     seed="insight_secret_phrase",
-    endpoint=["http://127.0.0.1:8001/submit"],
     port=8001,
+    endpoint=["http://127.0.0.1:8001/submit"]
 )
 
-# Attach the protocol
 data_agent.include(analysis_protocol)
 
-# Run the agent
 if __name__ == "__main__":
     data_agent.run()
